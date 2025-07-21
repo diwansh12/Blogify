@@ -392,7 +392,7 @@ Issues: Report bugs via GitHub issues
 
 Discussions: Join community discussions
 
-Email: contact@blogify.com (if applicable)
+Email: diwansh1112@gmail.com
 
 🗺️ Roadmap
 Version 2.0
