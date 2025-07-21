@@ -53,7 +53,7 @@ Installation
 Clone the repository
 
 bash
-git clone https://github.com/yourusername/blogify.git
+git clone https://github.com/diwansh12/blogify.git
 cd blogify
 Install dependencies
 
