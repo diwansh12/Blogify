@@ -36,7 +36,7 @@ const withDB = (handler) => async (req, res) => {
 
 app.use(cors({
   origin: [
-    'https://blogify-phi-seven.vercel.app/',
+    'https://blogify-phi-seven.vercel.app',
     'http://localhost:3000'
   ], // Allow all origins for now
   credentials: true
