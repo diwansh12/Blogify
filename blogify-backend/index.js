@@ -10,42 +10,35 @@ import { storage } from "./utils/cloudinary.js";
 dotenv.config();
 const app = express();
 
-// Production middlewares
+
+const withDB = (handler) => async (req, res) => {
+  await connectDB();
+  return handler(req, res);
+};
+
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? ['https://yourdomain.com', 'https://www.yourdomain.com']
-    : ['http://localhost:3000', 'http://localhost:5173'],
+  origin: true, // Allow all origins for now
   credentials: true
 }));
 
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json());
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV 
-  });
-});
+// Test endpoint to verify server is working
+app.get("/test", withDB((req, res) => {
+  res.json({ message: "Server is working!" });
+}))
 
 // File Upload
 const upload = multer({ storage });
-app.post("/upload", upload.single("image"), (req, res) => {
+app.post("/upload", withDB(upload.single("image")), (req, res) => {
   if (!req.file?.path) {
     return res.status(400).json({ message: "Upload failed" });
   }
   res.json({ url: req.file.path });
 });
 
-// MongoDB connection
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ MongoDB connected"))
-  .catch((err) => console.error("❌ MongoDB error:", err));
 
-// Blog Schema
+// Schemas
 const BlogSchema = new mongoose.Schema(
   {
     title: String,
@@ -59,7 +52,6 @@ const BlogSchema = new mongoose.Schema(
 
 const Blog = mongoose.model("Blog", BlogSchema);
 
-// User Schema
 const UserSchema = new mongoose.Schema({
   name: String,
   email: { type: String, unique: true },
@@ -68,7 +60,6 @@ const UserSchema = new mongoose.Schema({
 
 const User = mongoose.model("User", UserSchema);
 
-// Comment Schema
 const CommentSchema = new mongoose.Schema(
   {
     postId: { type: mongoose.Schema.Types.ObjectId, ref: 'Blog', required: true },
@@ -84,27 +75,22 @@ const CommentSchema = new mongoose.Schema(
 
 const Comment = mongoose.model("Comment", CommentSchema);
 
-
-// Notification Schema
 const NotificationSchema = new mongoose.Schema({
-  user:    { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  type:    { type: String, enum: ['comment','like'], required: true },
+  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  type: { type: String, enum: ['comment','like'], required: true },
   message: String,
-  link:    String,
-  isRead:  { type: Boolean, default: false }
-},{ timestamps: true });
+  link: String,
+  isRead: { type: Boolean, default: false }
+}, { timestamps: true });
 
 const Notification = mongoose.model("Notification", NotificationSchema);
 
-
-// Auth middleware
+// ✅ FIXED Auth middleware - now includes user name
 function auth(req, res, next) {
   const authHeader = req.headers.authorization;
-  console.log("🔐 Incoming Authorization:", authHeader);
-
   const token = authHeader?.split(" ")[1];
+  
   if (!token) {
-    console.log("❌ No token provided");
     return res.status(401).json({ error: "Unauthorized" });
   }
 
@@ -113,15 +99,12 @@ function auth(req, res, next) {
     req.user = decoded;
     next();
   } catch (err) {
-    console.log("❌ Invalid token:", err.message);
     return res.status(401).json({ error: "Invalid token" });
   }
 }
 
 // ===== BLOG ROUTES =====
-
-// Get all posts
-app.get("/posts", async (req, res) => {
+app.get("/posts", withDB(async (req, res) => {
   try {
     const posts = await Blog.find().sort({ createdAt: -1 });
     res.json(posts);
@@ -129,10 +112,9 @@ app.get("/posts", async (req, res) => {
     console.error("Error fetching posts:", err);
     res.status(500).json({ message: "Server error" });
   }
-});
+}));
 
-// Create post
-app.post("/posts", auth, async (req, res) => {
+app.post("/posts", auth, withDB(async (req, res) => {
   try {
     const newPost = new Blog({ ...req.body, author: req.user.id });
     await newPost.save();
@@ -141,10 +123,9 @@ app.post("/posts", auth, async (req, res) => {
     console.error("Create post error:", err);
     res.status(500).json({ message: "Server error" });
   }
-});
+}));
 
-// Get post by ID
-app.get("/posts/:id", async (req, res) => {
+app.get("/posts/:id", withDB(async (req, res) => {
   try {
     const post = await Blog.findById(req.params.id);
     if (!post) {
@@ -155,10 +136,9 @@ app.get("/posts/:id", async (req, res) => {
     console.error("Error fetching post:", err);
     res.status(500).json({ message: "Server error" });
   }
-});
+}));
 
-// Update post
-app.put("/posts/:id", auth, async (req, res) => {
+app.put("/posts/:id", auth, withDB(async (req, res) => {
   try {
     const post = await Blog.findById(req.params.id);
     
@@ -178,46 +158,32 @@ app.put("/posts/:id", auth, async (req, res) => {
     console.error("Update post error:", err);
     res.status(500).json({ message: "Server error" });
   }
-});
+}));
 
-// Delete post
-app.delete("/posts/:id", auth, async (req, res) => {
+app.delete("/posts/:id", auth, withDB(async (req, res) => {
   try {
-    console.log("🗑️ Delete request for post:", req.params.id);
-    console.log("👤 User ID from token:", req.user.id);
-    
     const post = await Blog.findById(req.params.id);
     
     if (!post) {
-      console.log("❌ Post not found");
       return res.status(404).json({ message: "Post not found" });
     }
     
-    console.log("📝 Post author:", post.author);
-    
     if (post.author !== req.user.id) {
-      console.log("❌ User not authorized to delete this post");
       return res.status(403).json({ message: "You are not the author of this post" });
     }
 
     await Blog.findByIdAndDelete(req.params.id);
-    console.log("✅ Post deleted successfully");
-    
     res.json({ message: "Post deleted successfully" });
     
   } catch (error) {
     console.error("❌ Delete route error:", error);
     res.status(500).json({ message: "Server error", error: error.message });
   }
-});
+}));
 
 // ===== COMMENT ROUTES =====
-
-// Get comments for a post
-app.get("/posts/:postId/comments", async (req, res) => {
+app.get("/posts/:postId/comments", withDB(async (req, res) => {
   try {
-    console.log("📝 Fetching comments for post:", req.params.postId);
-    
     const comments = await Comment.find({ 
       postId: req.params.postId,
       parentComment: null
@@ -234,7 +200,6 @@ app.get("/posts/:postId/comments", async (req, res) => {
       })
     );
 
-    console.log(`✅ Found ${comments.length} comments for post ${req.params.postId}`);
     res.json(commentsWithReplies);
   } catch (error) {
     console.error("❌ Comments fetch error:", error);
@@ -243,13 +208,11 @@ app.get("/posts/:postId/comments", async (req, res) => {
       details: error.message 
     });
   }
-});
+}));
 
-// Add a comment
-app.post("/posts/:postId/comments", auth, async (req, res) => {
+// ✅ FIXED Add comment with proper notification handling
+app.post("/posts/:postId/comments", auth, withDB(async (req, res) => {
   try {
-    console.log("💬 Creating comment for post:", req.params.postId);
-    
     const { content, parentComment } = req.body;
     
     if (!content || !content.trim()) {
@@ -266,18 +229,24 @@ app.post("/posts/:postId/comments", auth, async (req, res) => {
     await comment.save();
     await comment.populate('author', 'name email');
 
-    console.log("✅ Comment created successfully");
+    // ✅ FIXED: Proper notification handling inside try-catch
+    try {
+      const post = await Blog.findById(req.params.postId);
+      if (post && post.author !== req.user.id.toString()) {
+        await Notification.create({
+          user: post.author,
+          type: 'comment',
+          message: `${req.user.name || 'Someone'} commented on your post`,
+          link: `/post/${req.params.postId}`
+        });
+      }
+    } catch (notifError) {
+      console.error("❌ Notification error:", notifError);
+      // Don't fail comment creation if notification fails
+    }
+
     res.status(201).json(comment);
-    // After you save a comment:
-const post = await Blog.findById(req.params.postId);
-if (post && post.author !== req.user.id.toString()) {
-  await Notification.create({
-    user:    post.author,
-    type:    'comment',
-    message: `${req.user.name} commented on your post`,
-    link:    `/post/${req.params.postId}`
-  });
-}
+    
   } catch (error) {
     console.error("❌ Create comment error:", error);
     res.status(500).json({ 
@@ -285,10 +254,9 @@ if (post && post.author !== req.user.id.toString()) {
       details: error.message 
     });
   }
-});
+}));
 
-// Update comment
-app.put("/comments/:id", auth, async (req, res) => {
+app.put("/comments/:id", auth, withDB(async (req, res) => {
   try {
     const comment = await Comment.findById(req.params.id);
     
@@ -312,10 +280,9 @@ app.put("/comments/:id", auth, async (req, res) => {
     console.error("❌ Update comment error:", error);
     res.status(500).json({ error: "Failed to update comment" });
   }
-});
+}));
 
-// Delete comment
-app.delete("/comments/:id", auth, async (req, res) => {
+app.delete("/comments/:id", auth, withDB(async (req, res) => {
   try {
     const comment = await Comment.findById(req.params.id);
     
@@ -335,10 +302,10 @@ app.delete("/comments/:id", auth, async (req, res) => {
     console.error("❌ Delete comment error:", error);
     res.status(500).json({ error: "Failed to delete comment" });
   }
-});
+}));
 
-// Like/Unlike comment
-app.post("/comments/:id/like", auth, async (req, res) => {
+// ✅ FIXED Like comment with proper notification handling
+app.post("/comments/:id/like", auth, withDB(async (req, res) => {
   try {
     const comment = await Comment.findById(req.params.id);
     
@@ -353,27 +320,34 @@ app.post("/comments/:id/like", auth, async (req, res) => {
       comment.likes = comment.likes.filter(id => id.toString() !== userId);
     } else {
       comment.likes.push(userId);
+      
+      // ✅ FIXED: Only create notification when liking (not unliking)
+      try {
+        if (comment.author.toString() !== req.user.id) {
+          await Notification.create({
+            user: comment.author,
+            type: 'like',
+            message: `${req.user.name || 'Someone'} liked your comment`,
+            link: `/post/${comment.postId}#comment-${comment._id}`
+          });
+        }
+      } catch (notifError) {
+        console.error("❌ Notification error:", notifError);
+        // Don't fail the like if notification fails
+      }
     }
 
     await comment.save();
     res.json({ likes: comment.likes.length, hasLiked: !hasLiked });
-    const original = await Comment.findById(req.params.id);
-if (original.author.toString() !== req.user.id) {
-  await Notification.create({
-    user:    original.author,
-    type:    'like',
-    message: `${req.user.name} liked your comment`,
-    link:    `/post/${original.postId}#comment-${original._id}`
-  });
-}
+    
   } catch (error) {
     console.error("❌ Like comment error:", error);
     res.status(500).json({ error: "Failed to like comment" });
   }
-});
+}));
 
-// GET /notifications → fetch a user’s notifications
-app.get("/notifications", auth, async (req, res) => {
+// ===== NOTIFICATION ROUTES =====
+app.get("/notifications", auth, withDB(async (req, res) => {
   try {
     const notes = await Notification
       .find({ user: req.user.id })
@@ -384,10 +358,9 @@ app.get("/notifications", auth, async (req, res) => {
     console.error("❌ fetch notifications:", err);
     res.status(500).json({ error: "Failed to fetch notifications" });
   }
-});
+}));
 
-// POST /notifications/:id/read → mark one read
-app.post("/notifications/:id/read", auth, async (req, res) => {
+app.post("/notifications/:id/read", auth, withDB(async (req, res) => {
   try {
     const note = await Notification.findById(req.params.id);
     if (!note || note.user.toString() !== req.user.id)
@@ -400,10 +373,9 @@ app.post("/notifications/:id/read", auth, async (req, res) => {
     console.error("❌ mark read:", err);
     res.status(500).json({ error: "Failed to mark read" });
   }
-});
+}));
 
-// POST /notifications/read-all → mark all as read
-app.post("/notifications/read-all", auth, async (req, res) => {
+app.post("/notifications/read-all", auth, withDB(async (req, res) => {
   try {
     await Notification.updateMany(
       { user: req.user.id, isRead: false },
@@ -414,12 +386,10 @@ app.post("/notifications/read-all", auth, async (req, res) => {
     console.error("❌ mark all read:", err);
     res.status(500).json({ error: "Failed to mark all read" });
   }
-});
+}));
 
 // ===== AUTH ROUTES =====
-
-// Register
-app.post("/auth/register", async (req, res) => {
+app.post("/auth/register", withDB(async (req, res) => {
   const { name, email, password } = req.body;
 
   const missing = [];
@@ -448,21 +418,27 @@ app.post("/auth/register", async (req, res) => {
     console.error("❌ Register error:", err);
     res.status(500).json({ message: "Server error" });
   }
-});
+}));
 
-// Login - FIXED
-app.post("/auth/login", async (req, res) => {
+// ✅ FIXED Login - now includes user name in JWT
+app.post("/auth/login", withDB(async (req, res) => {
   try {
     const { email, password } = req.body;
     
     const user = await User.findOne({ email });
-    if (!user || !(await bcrypt.compare(password, user.password))) {  // ✅ Added await
+    if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
-      expiresIn: "1d",
-    });
+    const token = jwt.sign(
+      { 
+        id: user._id, 
+        name: user.name,  // ✅ Added name to JWT
+        email: user.email 
+      }, 
+      process.env.JWT_SECRET, 
+      { expiresIn: "1d" }
+    );
 
     res.json({ 
       token, 
@@ -476,29 +452,12 @@ app.post("/auth/login", async (req, res) => {
     console.error("❌ Login error:", err);
     res.status(500).json({ message: "Server error" });
   }
-});
+}));
 
 // Root route
 app.get("/", (req, res) => {
   res.send("✅ Blogify backend is running!");
 });
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ 
-    message: 'Something went wrong!',
-    error: process.env.NODE_ENV === 'development' ? err.message : {}
-  });
-});
 
-// Handle 404
-app.use('*', (req, res) => {
-  res.status(404).json({ message: 'Route not found' });
-});
-
-
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server running on port ${PORT} in ${process.env.NODE_ENV} mode`);
-});
+export default app;
