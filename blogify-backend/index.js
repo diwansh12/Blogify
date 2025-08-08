@@ -10,6 +10,24 @@ import { storage } from "./utils/cloudinary.js";
 dotenv.config();
 const app = express();
 
+let isConnected = false;
+
+const connectDB = async () => {
+  if (isConnected) return;
+  
+  try {
+    await mongoose.connect(process.env.MONGO_URI, {
+      maxPoolSize: 5,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    });
+    isConnected = true;
+    console.log("✅ MongoDB connected");
+  } catch (err) {
+    console.error("❌ MongoDB error:", err);
+    throw err;
+  }
+};
 
 const withDB = (handler) => async (req, res) => {
   await connectDB();
@@ -17,7 +35,10 @@ const withDB = (handler) => async (req, res) => {
 };
 
 app.use(cors({
-  origin: true, // Allow all origins for now
+  origin: [
+    'https://blogify-phi-seven.vercel.app/',
+    'http://localhost:3000'
+  ], // Allow all origins for now
   credentials: true
 }));
 
